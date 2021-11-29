@@ -29,7 +29,12 @@ from .const import (
 )
 
 SUPPORT_SET_SPEED = 1
+SUPPORT_OSCILLATE = 2
+SUPPORT_DIRECTION = 4
+SUPPORT_PRESET_MODE = 8
 
+PRESET_AUTO = "auto"
+PRESET_PARTY = "party"
 SPEED_BASIC_VENTILATION = "basic"
 SPEED_RATED_VENTILATION = "rated"
 SPEED_INTENSIVE_VENTILATION = "intensive"
@@ -72,7 +77,7 @@ class EasyControlFanDevice(FanEntity):
 
     @property
     def supported_features(self):
-        return SUPPORT_SET_SPEED
+        return SUPPORT_SET_SPEED | SUPPORT_PRESET_MODE
 
     @property
     def speed_list(self):
@@ -88,6 +93,18 @@ class EasyControlFanDevice(FanEntity):
         if self._fan_stage is None or self._fan_stage == 0:
             return None
         return self.speed_list[self._fan_stage - 1]
+    
+    @property
+    def preset_modes(self):
+        return [
+            PRESET_AUTO,
+            PRESET_PARTY,
+        ]
+    def getpreset_speed(self,preset: str):
+        dict = { PRESET_AUTO: 0, PRESET_PARTY: SPEED_MAXIMUM_FAN_SPEED}
+        if preset in dict.keys:
+            return dict[preset];
+        return 0
 
     @property
     def is_on(self):
@@ -137,6 +154,15 @@ class EasyControlFanDevice(FanEntity):
         self._controller.set_variable(
             VARIABLE_PARTY_MODE, 1, "{:d}"
         )
+    
+    async def async_set_preset_mode(self, preset_mode: str):
+        if preset_mode == PRESET_AUTO:
+            self._controller.set_variable(
+                VARIABLE_OPERATING_MODE, 0, "{:d}"
+            )  # operation mode = automatic
+        else:
+            if preset_mode in self.preset_modes:
+                self.async_set_speed(self.getpreset_speed(preset_mode))
 
     async def async_update(self):
         self._supply_air_rpm = self._controller.get_variable(VARIABLE_SUPPLY_AIR_RPM, 8, float)
@@ -153,6 +179,8 @@ class EasyControlFanDevice(FanEntity):
         holiday_mode = self._controller.get_variable(
             VARIABLE_HOLIDAY_MODE, 1, int)
 
+        operation_mode = MODE_AUTO if operation_mode == 0 else MODE_MANUAL
+
         if party_mode == 1:
             preset_mode = PRESET_PARTY
         else:
@@ -165,9 +193,11 @@ class EasyControlFanDevice(FanEntity):
                     if holiday_mode == 2:
                         preset_mode = PRESET_HOLIDAY_CONSTANT
                     else:
-                        preset_mode = PRESET_NOT_SET
+                        if operation_mode == MODE_AUTO:
+                            preset_mode= PRESET_AUTO
+                        else:
+                            preset_mode = PRESET_NOT_SET
 
-        operation_mode = MODE_AUTO if operation_mode == 0 else MODE_MANUAL
 
         # air_flow_rate = self._controller.maximum_air_flow * \
         #     self._percentage_fan_speed / 100.0
@@ -200,7 +230,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
         duration = call.data.get('duration', 60)
         speed = call.data.get('speed', 'high')
         fan.start_party_mode(speed, duration)
+    def handle_set_operation_mode(call):
+        duration = call.data.get('duration', 60)
+        speed = call.data.get('speed', 'high')
+        fan.start_party_mode(speed, duration)
 
     hass.services.async_register(DOMAIN, "party_mode", handle_party_mode)
+    hass.services.async_register(DOMAIN, "set_operation_mode", handle_set_operation_mode)    
 
     _LOGGER.info("Setting up Helios EasyControls fan device completed.")
